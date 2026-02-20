@@ -1,0 +1,84 @@
+import java.util.*;
+import java.io.FileNotFoundException;
+import java.io.File;
+import java.util.Scanner;
+
+public class Main {
+    public static void main(String[] args) throws FileNotFoundException {
+        File folder = new File("src/documents");
+        File[] files = folder.listFiles();
+
+        HashMap<String , List<String>> docs = new HashMap<>();
+        HashMap<String, Double> idfValue = new HashMap<>();
+        Map<String, Map<String, Double>> rtfValues = new HashMap<>();
+        Set<String> allWords = new HashSet<>();
+
+        for (File file : files) {
+            if (file.isFile()) {
+                docs.putIfAbsent(file.getName(), new ArrayList<>());
+                Scanner scanner = new Scanner(file);
+
+                while (scanner.hasNext()) {
+                    String word = scanner.next();
+                    docs.get(file.getName()).add(word);
+                }
+            }
+        }
+
+        long docTotal = docs.size();
+
+        for (List<String> words : docs.values()) {
+            allWords.addAll(words);
+        }
+
+        Set<String> uniqueWords = new HashSet<>(allWords);
+        for(String word:uniqueWords){
+            if (IDF(docTotal,frequency(docs,word)) >= .1){
+                idfValue.put(word,IDF(docTotal,frequency(docs,word)));
+            }
+        }
+
+        for(Map.Entry<String, List<String>> entry : docs.entrySet()){
+            String docName = entry.getKey();
+            List<String> words =  entry.getValue();
+            words.removeIf(word -> !idfValue.containsKey(word));
+            Map<String, Double> docRTF = new HashMap<>();
+
+            for (String word : words){
+                double rtf = RTF(words, word);
+                docRTF.put(word, rtf);
+            }
+
+            rtfValues.put(docName, docRTF);
+        }
+        System.out.println(rtfValues);
+    }
+
+    public static double RTF(List <String> words, String word){
+        long wordCount = 0;
+        long totalWords = words.size();
+
+        for (String w: words){
+            if(w.equals(word)){
+                wordCount++;
+            }
+        }
+
+        return (double)wordCount/totalWords;
+    }
+
+    public static long frequency(HashMap<String , List<String>> docs, String word){
+        long count = 0;
+
+        for (String filename : docs.keySet()){
+            if (docs.get(filename).contains(word)){
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public static double IDF(long docTotal, long frequency){
+        return (Math.log((double) docTotal / (frequency)));
+    }
+}
