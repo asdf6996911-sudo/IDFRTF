@@ -1,133 +1,129 @@
-import java.util.*;
-import java.io.FileNotFoundException;
 import java.io.File;
-import java.util.Scanner;
+import java.io.FileNotFoundException;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class Main {
     public static void main(String[] args) throws FileNotFoundException {
         File folder = new File("src/documents");
         File[] files = folder.listFiles();
 
-        HashMap<String , List<String>> docs = new HashMap<>();
-        HashMap<String, Double> idfValue = new HashMap<>();
-        Map<String, Map<String, Double>> rtfValues = new HashMap<>();
-        Set<String> allWords = new HashSet<>();
+        HashMap<String, Map<String, Double>> tfidfMap = new HashMap<>();
+        HashMap<String, Integer> docFreq = new HashMap<>();
+        HashMap<String, Map<String, Integer>> wordCountsPerDoc = new HashMap<>();
+        HashMap<String, Integer> totalWordsPerDoc = new HashMap<>();
+        HashMap<String, Map<String, Double>> rtfMap = new HashMap<>();
+        HashMap<String, Map<String, Double>> idfMapPerDoc = new HashMap<>();
 
         for (File file : files) {
-            if (file.isFile()) {
-                docs.putIfAbsent(file.getName(), new ArrayList<>());
-                Scanner scanner = new Scanner(file);
+            Scanner scanner = new Scanner(file);
+            Map<String, Integer> wordCount = new HashMap<>();
+            int totalWords = 0;
 
-                while (scanner.hasNext()) {
-                    String word = scanner.next();
-                    docs.get(file.getName()).add(word);
+            while (scanner.hasNext()) {
+                String word = scanner.next().toLowerCase().replaceAll("[^a-z]", "");
+                wordCount.put(word, wordCount.getOrDefault(word, 0) + 1);
+                totalWords++;
+            }
+
+            wordCountsPerDoc.put(file.getName(), wordCount);
+            totalWordsPerDoc.put(file.getName(), totalWords);
+
+            for (String word : wordCount.keySet()) {
+                docFreq.put(word, docFreq.getOrDefault(word, 0) + 1);
+            }
+
+            Map<String, Double> rtfValues = new HashMap<>();
+            Map<String, Double> idfValues = new HashMap<>();
+            for (String word : wordCount.keySet()) {
+                double tf = RTF(wordCount.get(word), totalWords);
+                rtfValues.put(word, tf);
+                idfValues.put(word, IDF(files.length, docFreq.get(word)));
+            }
+            rtfMap.put(file.getName(), rtfValues);
+            idfMapPerDoc.put(file.getName(), idfValues);
+        }
+
+        int totalDocs = files.length;
+        Map<String, Double> idfMap = new HashMap<>();
+        for (String word : docFreq.keySet()) {
+            idfMap.put(word, IDF(totalDocs, docFreq.get(word)));
+        }
+
+        List<String> sortedWords = new ArrayList<>(idfMap.keySet());
+        sortedWords.sort(Comparator.comparingDouble(idfMap::get));
+
+        int cutoff = (int) Math.ceil(sortedWords.size() * 0.1);
+        sortedWords.subList(0, cutoff).clear();
+        sortedWords.subList(sortedWords.size() - cutoff, sortedWords.size()).clear();
+
+        Set<String> lexicon = new HashSet<>(sortedWords);
+
+        for (String docName : wordCountsPerDoc.keySet()) {
+            Map<String, Double> tfidfValues = new HashMap<>();
+            Map<String, Integer> wordCount = wordCountsPerDoc.get(docName);
+            int totalWords = totalWordsPerDoc.get(docName);
+
+            for (String word : wordCount.keySet()) {
+                if (lexicon.contains(word)) {
+                    double tf = RTF(wordCount.get(word), totalWords);
+                    double idf = idfMap.get(word);
+                    tfidfValues.put(word, TFIDF(tf, idf));
                 }
             }
+            tfidfMap.put(docName, tfidfValues);
         }
 
-        long docTotal = docs.size();
-
-        for (List<String> words : docs.values()) {
-            allWords.addAll(words);
-        }
-
-        Set<String> uniqueWords = new HashSet<>(allWords);
-        for(String word:uniqueWords){
-            if (IDF(docTotal,frequency(docs,word)) >= .1){
-                idfValue.put(word,IDF(docTotal,frequency(docs,word)));
-            }
-        }
-
-        for(Map.Entry<String, List<String>> entry : docs.entrySet()){
-            String docName = entry.getKey();
-            List<String> words =  entry.getValue();
-            words.removeIf(word -> !idfValue.containsKey(word));
-            Map<String, Double> docRTF = new HashMap<>();
-
-            for (String word : words){
-                double rtf = RTF(words, word);
-                docRTF.put(word, rtf);
-            }
-
-            rtfValues.put(docName, docRTF);
-        }
-        System.out.println(rtfValues);
-    }
-
-    public static double RTF(List <String> words, String word){
-        long wordCount = 0;
-        long totalWords = words.size();
-
-        for (String w: words){
-            if(w.equals(word)){
-                wordCount++;
-            }
-        }
-
-        return (double)wordCount/totalWords;
-    }
-
-    public static long frequency(HashMap<String , List<String>> docs, String word){
-        long count = 0;
-
-        for (String filename : docs.keySet()){
-            if (docs.get(filename).contains(word)){
-                count++;
-            }
-        }
-        return count;
-    }
-
-    public static double IDF(long docTotal, long frequency){
-        return (Math.log((double) docTotal / (frequency)));
-    }
-}
-
-
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.util.*;
-
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-public class Main {
-    public static void main(String[] args) throws FileNotFoundException {
-        File folder = new File("src/documents");
-        File[] files = folder.listFiles();
-
-        HashMap<String , Map<String, Integer>> docs = new HashMap<>();
-        Map<String, Integer> Freq = new HashMap<>();
-
-        for (File file : files){
-            if(file.isFile()){
-
-                Scanner scanner = new Scanner(file);
-
-                while (scanner.hasNext()){
-                    String word =scanner.next();
-                    Freq.put(word, Freq.getOrDefault(word, 0)+1);
+        HashMap<String, List<String>> top5SimilarDocs = new HashMap<>();
+        for (String docA : rtfMap.keySet()) {
+            Map<String, Double> similarities = new HashMap<>();
+            for (String docB : rtfMap.keySet()) {
+                if (!docA.equals(docB)) {
+                    double sim = cosineSimilarity(lexicon, rtfMap.get(docA), rtfMap.get(docB));
+                    similarities.put(docB, sim);
                 }
-
-                docs.put(file.getName(), Freq);
             }
+            List<String> top5 = similarities.entrySet().stream()
+                    .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                    .limit(5)
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toList());
+            top5SimilarDocs.put(docA, top5);
         }
 
-
-        for (Map.Entry<String, Integer> entry : Freq.entrySet()){
-            String docName = entry.getKey();
-            Integer word = entry.getValue();
-
-
-            long docSize = Freq.size();
-            int freq = Freq.get(Freq);
-
-            System.out.println(docSize);
-            System.out.println(freq);
-
+        System.out.println("Lexicon: " + lexicon);
+        System.out.println("RTF Values: " + rtfMap);
+        System.out.println("IDF Values: " + idfMapPerDoc);
+        System.out.println("TF-IDF Values: " + tfidfMap);
+        System.out.println("Top 5 most similar documents:");
+        for (String doc : top5SimilarDocs.keySet()) {
+            System.out.println(doc + " -> " + top5SimilarDocs.get(doc));
         }
     }
 
-    public static double RTF(long docSize, long wordFreq){
-        return (double) wordFreq/docSize;
+    public static double cosineSimilarity(Set<String> lexicon, Map<String, Double> doc1, Map<String, Double> doc2) {
+        double numerator = 0;
+        double denomA = 0;
+        double denomB = 0;
+        for (String word : lexicon) {
+            double a = doc1.getOrDefault(word, 0.0);
+            double b = doc2.getOrDefault(word, 0.0);
+            numerator += a * b;
+            denomA += a * a;
+            denomB += b * b;
+        }
+        return numerator / (Math.sqrt(denomA) * Math.sqrt(denomB));
+    }
+
+    public static double RTF(int wordCount, int totalWords) {
+        return (double) wordCount / totalWords;
+    }
+
+    public static double IDF(int totalDocs, int docsContain) {
+        return Math.log((double) totalDocs / docsContain) / Math.log(2);
+    }
+
+    public static double TFIDF(double rtf, double idf) {
+        return rtf * idf;
     }
 }
