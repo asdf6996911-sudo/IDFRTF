@@ -1,129 +1,175 @@
-import java.io.File;
-import java.io.FileNotFoundException;
 import java.util.*;
-import java.util.stream.Collectors;
+import java.io.*;
 
-public class Main {
-    public static void main(String[] args) throws FileNotFoundException {
-        File folder = new File("src/documents");
-        File[] files = folder.listFiles();
+class IDF{
+    public static void main(String[]args) throws IOException{
+        HashMap<String, Integer> DF = new HashMap<String, Integer>();
+        HashMap<String, HashMap<String, Integer>> TFdocs = new HashMap<String, HashMap<String, Integer>>();
+        HashMap<String, HashMap<String, Double>> RTF = new HashMap<String, HashMap<String, Double>>();
+        HashMap<String, Double> IDF = new HashMap<String,Double>();
 
-        HashMap<String, Map<String, Double>> tfidfMap = new HashMap<>();
-        HashMap<String, Integer> docFreq = new HashMap<>();
-        HashMap<String, Map<String, Integer>> wordCountsPerDoc = new HashMap<>();
-        HashMap<String, Integer> totalWordsPerDoc = new HashMap<>();
-        HashMap<String, Map<String, Double>> rtfMap = new HashMap<>();
-        HashMap<String, Map<String, Double>> idfMapPerDoc = new HashMap<>();
+        String regex = "[^a-z]";
+        int numDocs=0;
 
-        for (File file : files) {
-            Scanner scanner = new Scanner(file);
-            Map<String, Integer> wordCount = new HashMap<>();
-            int totalWords = 0;
+        File files = new File("../IR/TFIDF");
 
-            while (scanner.hasNext()) {
-                String word = scanner.next().toLowerCase().replaceAll("[^a-z]", "");
-                wordCount.put(word, wordCount.getOrDefault(word, 0) + 1);
-                totalWords++;
-            }
+        for(File f : files.listFiles()){
+            BufferedReader br = new BufferedReader(new FileReader(f));
+            HashSet<String> terms = new HashSet<>();
+            HashMap<String, Integer> TF = new HashMap<String, Integer>();
+            String line = "";
+            int wordCount = 0;
+            numDocs++;
 
-            wordCountsPerDoc.put(file.getName(), wordCount);
-            totalWordsPerDoc.put(file.getName(), totalWords);
-
-            for (String word : wordCount.keySet()) {
-                docFreq.put(word, docFreq.getOrDefault(word, 0) + 1);
-            }
-
-            Map<String, Double> rtfValues = new HashMap<>();
-            Map<String, Double> idfValues = new HashMap<>();
-            for (String word : wordCount.keySet()) {
-                double tf = RTF(wordCount.get(word), totalWords);
-                rtfValues.put(word, tf);
-                idfValues.put(word, IDF(files.length, docFreq.get(word)));
-            }
-            rtfMap.put(file.getName(), rtfValues);
-            idfMapPerDoc.put(file.getName(), idfValues);
-        }
-
-        int totalDocs = files.length;
-        Map<String, Double> idfMap = new HashMap<>();
-        for (String word : docFreq.keySet()) {
-            idfMap.put(word, IDF(totalDocs, docFreq.get(word)));
-        }
-
-        List<String> sortedWords = new ArrayList<>(idfMap.keySet());
-        sortedWords.sort(Comparator.comparingDouble(idfMap::get));
-
-        int cutoff = (int) Math.ceil(sortedWords.size() * 0.1);
-        sortedWords.subList(0, cutoff).clear();
-        sortedWords.subList(sortedWords.size() - cutoff, sortedWords.size()).clear();
-
-        Set<String> lexicon = new HashSet<>(sortedWords);
-
-        for (String docName : wordCountsPerDoc.keySet()) {
-            Map<String, Double> tfidfValues = new HashMap<>();
-            Map<String, Integer> wordCount = wordCountsPerDoc.get(docName);
-            int totalWords = totalWordsPerDoc.get(docName);
-
-            for (String word : wordCount.keySet()) {
-                if (lexicon.contains(word)) {
-                    double tf = RTF(wordCount.get(word), totalWords);
-                    double idf = idfMap.get(word);
-                    tfidfValues.put(word, TFIDF(tf, idf));
+            while((line=br.readLine())!= null){
+                String[] tokens = line.trim().split("\\s+");
+                for(String token : tokens){
+                    //update TermFrequency and add tokens to hashset to put into DocFrequency after loop
+                    token = removeNonAlphanumeric(token.toLowerCase(), regex);
+                    terms.add(token);
+                    TF.put(token, TF.getOrDefault(token, 0) +1);
+                    wordCount++;
                 }
             }
-            tfidfMap.put(docName, tfidfValues);
-        }
-
-        HashMap<String, List<String>> top5SimilarDocs = new HashMap<>();
-        for (String docA : rtfMap.keySet()) {
-            Map<String, Double> similarities = new HashMap<>();
-            for (String docB : rtfMap.keySet()) {
-                if (!docA.equals(docB)) {
-                    double sim = cosineSimilarity(lexicon, rtfMap.get(docA), rtfMap.get(docB));
-                    similarities.put(docB, sim);
-                }
+            //adds unique term per doc to DF
+            for(String token : terms){
+                DF.put(token, DF.getOrDefault(token, 0) +1);
             }
-            List<String> top5 = similarities.entrySet().stream()
-                    .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                    .limit(5)
-                    .map(Map.Entry::getKey)
-                    .collect(Collectors.toList());
-            top5SimilarDocs.put(docA, top5);
+            //adds TermFrequency of current doc to the map of all docs
+            TFdocs.put(f.getName(), TF);
+
+            //calculating RTF
+            HashMap<String, Double> temp = new HashMap<String, Double>();
+            for(String key : TF.keySet()){
+                temp.put(key, RTF(TF.get(key), wordCount));
+            }
+            RTF.put(f.getName(), temp);
+            br.close();
+        }
+        
+        //calculting IDF
+        for(String key : DF.keySet()){
+            IDF.put(key, IDF(numDocs, DF.get(key)));
+        }
+        double cutoffTooMuch = IDF2(numDocs, (numDocs - (numDocs*.05)));
+        double cutoffTooLittle = IDF2(numDocs, (numDocs*.1));
+
+        //cosine similarity
+        BufferedReader br = new BufferedReader(new FileReader("../IR/01_sports_basketball_game_report.txt"));
+        String line = "";
+        HashMap<String, Integer> inputTF = new HashMap<String, Integer>();
+
+        //looping through input for the first time to get TF and IDF
+        while((line=br.readLine())!= null){
+            String[] tokens = line.trim().split("\\s+");
+            for(String token : tokens){
+                //update TermFrequency and add tokens to hashset to put into DocFrequency after loop
+                token = removeNonAlphanumeric(token.toLowerCase(), regex);
+                inputTF.put(token, inputTF.getOrDefault(token, 0) +1);
+            }
+        }
+        //finding idf of input txt file
+        HashMap<String, Double> inputTFIDF = new HashMap<String, Double>();
+        int newNumDocs = numDocs+1;
+        for(String key : inputTF.keySet()){
+            double df = DF.getOrDefault(key, 0) +1;
+            inputTFIDF.put(key, inputTF.get(key)*IDF2(newNumDocs,df));
         }
 
-        System.out.println("Lexicon: " + lexicon);
-        System.out.println("RTF Values: " + rtfMap);
-        System.out.println("IDF Values: " + idfMapPerDoc);
-        System.out.println("TF-IDF Values: " + tfidfMap);
-        System.out.println("Top 5 most similar documents:");
-        for (String doc : top5SimilarDocs.keySet()) {
-            System.out.println(doc + " -> " + top5SimilarDocs.get(doc));
+        //looping through every file and doing cosine sim
+        double[] cosineSim = new double[numDocs];
+        HashMap<Double,String> cosFileName = new HashMap<Double,String>();
+        int curr = 0;
+        for(File f : files.listFiles()){
+            double numerator = 0.0;
+            double d1 = 0.0;
+            double d2 = 0.0;
+
+            for(String key : DF.keySet()){
+                double input = inputTFIDF.getOrDefault(key,0.0);
+                double keyTFIDF = (TFdocs.get(f.getName()).getOrDefault(key, 0))*(IDF.getOrDefault(key, 0.0));
+                
+                numerator+= input * keyTFIDF;
+                d1+= input * input;
+                d2+= keyTFIDF * keyTFIDF;
+            }
+            cosineSim[curr] = numerator/(Math.sqrt(d1) * Math.sqrt(d2));
+            cosFileName.put(numerator/(Math.sqrt(d1) * Math.sqrt(d2)), f.getName());
+            curr++;
         }
-    }
+        br.close();
 
-    public static double cosineSimilarity(Set<String> lexicon, Map<String, Double> doc1, Map<String, Double> doc2) {
-        double numerator = 0;
-        double denomA = 0;
-        double denomB = 0;
-        for (String word : lexicon) {
-            double a = doc1.getOrDefault(word, 0.0);
-            double b = doc2.getOrDefault(word, 0.0);
-            numerator += a * b;
-            denomA += a * a;
-            denomB += b * b;
+        //sorting cosine sim
+        Arrays.sort(cosineSim);
+        for(double val : cosineSim){
+            System.out.println("Cosine sim of doc: " + cosFileName.get(val) + ", " + val);
         }
-        return numerator / (Math.sqrt(denomA) * Math.sqrt(denomB));
+
+        System.out.println("top 5 cosine similarities: ================");
+        int c = 5;
+        for(int i =cosineSim.length-5; i<cosineSim.length;i++){
+            System.out.println(c + ": " + cosFileName.get(cosineSim[i]));
+            c--;
+        }
+        //printing out to test (DocFrequency=====================)
+        BufferedWriter bw = new BufferedWriter(new FileWriter("../IR/testing/DF.txt"));
+        for (Map.Entry<String, Integer> entry : DF.entrySet()) {
+            bw.write("Doc Frequency: " + entry.getKey() + " -> " + entry.getValue());
+            bw.newLine();
+        }
+        bw.close();
+        //TermFrequency ======================================="
+        bw = new BufferedWriter(new FileWriter("../IR/testing/TF.txt"));
+        for (String key : TFdocs.keySet()) {
+            bw.write("File name: " + key + "\n =============================");
+            bw.newLine();
+            HashMap<String, Integer> innerMap = TFdocs.get(key);
+            for (String innerKey : innerMap.keySet()) {
+                bw.write("\tTerm Frequency: " + innerKey + " -> " + innerMap.get(innerKey));
+                bw.newLine();
+            }
+        }
+        bw.close();
+        //RTF =======================================
+        bw = new BufferedWriter(new FileWriter("../IR/testing/RTF.txt"));
+        for (String key : RTF.keySet()) {
+            bw.write("File name: " + key + "\n =============================");
+            bw.newLine();
+            HashMap<String, Double> innerMap = RTF.get(key);
+            for (String innerKey : innerMap.keySet()) {
+                bw.write("\tRTF: " + innerKey + " -> " + innerMap.get(innerKey));
+                bw.newLine();
+            }
+        }
+        bw.close();
+        //IDF =======================================
+        bw = new BufferedWriter(new FileWriter("../IR/testing/IDF.txt"));
+        for (Map.Entry<String, Double> entry : IDF.entrySet()) {
+            bw.write("IDF: " + entry.getKey() + " -> " + entry.getValue());
+            bw.newLine();
+        }
+        bw.close();
+
+
     }
 
-    public static double RTF(int wordCount, int totalWords) {
-        return (double) wordCount / totalWords;
+    public static String removeNonAlphanumeric(String str, String regex){
+        str = str.replaceAll(regex, "");
+        return str;
+    }
+    public static double RTF(Integer w, int d){
+        return (w*1.0)/d;
     }
 
-    public static double IDF(int totalDocs, int docsContain) {
-        return Math.log((double) totalDocs / docsContain) / Math.log(2);
+    public static double log2(double n){
+        return Math.log(n) / Math.log(2);
     }
 
-    public static double TFIDF(double rtf, double idf) {
-        return rtf * idf;
+    public static double IDF(int D, Integer w){
+        return log2((D*1.0)/w);
     }
+    public static double IDF2(int D, double w){
+        return log2((D*1.0)/w);
+    }
+    
 }
